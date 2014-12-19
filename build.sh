@@ -7,8 +7,7 @@ export KLIB=/cimc/exportfs/colibri
 
 if [ -z "$*" ]; then
     make defconfig-colibri
-    make install
+    make -j3 install
 else
-    make ${DEF_ARGS} $*
+    make -j3 ${DEF_ARGS} $*
 fi
-    
