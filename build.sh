@@ -1,12 +1,12 @@
 #!/usr/bin/sudo /bin/sh
 
 export ARCH=arm
-export CROSS_COMPILE=armv5tel-softfloat-linux-gnueabi-
+export CROSS_COMPILE=arm-fsl-linux-gnueabi-
 export KLIB_BUILD=/cimc/build/ravion-kernel
-export KLIB=/cimc/exportfs/colibri
+export KLIB=./../imx51kernel.output
 
 if [ -z "$*" ]; then
-    make defconfig-colibri
+    make defconfig-imx51
     make -j3 install
 else
     make -j3 ${DEF_ARGS} $*
