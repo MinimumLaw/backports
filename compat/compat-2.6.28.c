@@ -5,14 +5,13 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  *
- * Backport functionality introduced in Linux 2.6.28.
+ * Compatibility file for Linux wireless for kernels 2.6.28.
  */
 
 #include <linux/compat.h>
 #include <linux/usb.h>
 #include <linux/tty.h>
 #include <linux/skbuff.h>
-#include <linux/pci.h>
 #include <asm/poll.h>
 
 /* 2.6.28 compat code goes here */

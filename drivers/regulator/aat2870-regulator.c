@@ -174,7 +174,7 @@ static int aat2870_regulator_probe(struct platform_device *pdev)
 
 	config.dev = &pdev->dev;
 	config.driver_data = ri;
-	config.init_data = dev_get_platdata(&pdev->dev);
+	config.init_data = pdev->dev.platform_data;
 
 	rdev = regulator_register(&ri->desc, &config);
 	if (IS_ERR(rdev)) {

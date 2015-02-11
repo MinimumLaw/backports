@@ -3159,6 +3159,31 @@ static struct pci_driver atl1_driver = {
 #endif
 };
 
+/**
+ * atl1_exit_module - Driver Exit Cleanup Routine
+ *
+ * atl1_exit_module is called just before the driver is removed
+ * from memory.
+ */
+static void __exit atl1_exit_module(void)
+{
+	pci_unregister_driver(&atl1_driver);
+}
+
+/**
+ * atl1_init_module - Driver Registration Routine
+ *
+ * atl1_init_module is the first routine called when the driver is
+ * loaded. All it does is register with the PCI subsystem.
+ */
+static int __init atl1_init_module(void)
+{
+	return pci_register_driver(&atl1_driver);
+}
+
+module_init(atl1_init_module);
+module_exit(atl1_exit_module);
+
 struct atl1_stats {
 	char stat_string[ETH_GSTRING_LEN];
 	int sizeof_stat;
@@ -3708,5 +3733,3 @@ static const struct ethtool_ops atl1_ethtool_ops = {
 	.set_tso		= ethtool_op_set_tso,
 #endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39)) */
 };
-
-module_pci_driver(atl1_driver);

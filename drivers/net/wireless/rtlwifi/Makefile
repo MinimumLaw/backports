@@ -12,11 +12,13 @@ rtlwifi-objs	:=		\
 
 rtl8192c_common-objs +=		\
 
-obj-$(CPTCFG_RTLWIFI_PCI)	+= rtl_pci.o
-rtl_pci-objs	:=		pci.o
+ifneq ($(CONFIG_PCI),)
+rtlwifi-objs	+= pci.o
+endif
 
-obj-$(CPTCFG_RTLWIFI_USB)	+= rtl_usb.o
-rtl_usb-objs	:=		usb.o
+ifneq ($(CONFIG_USB),)
+rtlwifi-objs	+= usb.o
+endif
 
 obj-$(CPTCFG_RTL8192C_COMMON)	+= rtl8192c/
 obj-$(CPTCFG_RTL8192CE)		+= rtl8192ce/

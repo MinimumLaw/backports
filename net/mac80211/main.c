@@ -106,8 +106,17 @@ static u32 ieee80211_hw_conf_chan(struct ieee80211_local *local)
 
 	offchannel_flag = local->hw.conf.flags & IEEE80211_CONF_OFFCHANNEL;
 
-	if (local->scan_chandef.chan) {
-		chandef = local->scan_chandef;
+	if (local->scan_channel) {
+		chandef.chan = local->scan_channel;
+		/* If scanning on oper channel, use whatever channel-type
+		 * is currently in use.
+		 */
+		if (chandef.chan == local->_oper_chandef.chan) {
+			chandef = local->_oper_chandef;
+		} else {
+			chandef.width = NL80211_CHAN_WIDTH_20_NOHT;
+			chandef.center_freq1 = chandef.chan->center_freq;
+		}
 	} else if (local->tmp_channel) {
 		chandef.chan = local->tmp_channel;
 		chandef.width = NL80211_CHAN_WIDTH_20_NOHT;
@@ -146,7 +155,7 @@ static u32 ieee80211_hw_conf_chan(struct ieee80211_local *local)
 		changed |= IEEE80211_CONF_CHANGE_SMPS;
 	}
 
-	power = ieee80211_chandef_max_power(&chandef);
+	power = chandef.chan->max_power;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(sdata, &local->interfaces, list) {
@@ -326,7 +335,7 @@ static int ieee80211_ifa_changed(struct notifier_block *nb,
 		return NOTIFY_DONE;
 
 	ifmgd = &sdata->u.mgd;
-	sdata_lock(sdata);
+	mutex_lock(&ifmgd->mtx);
 
 	/* Copy the addresses to the bss_conf list */
 	ifa = idev->ifa_list;
@@ -344,7 +353,7 @@ static int ieee80211_ifa_changed(struct notifier_block *nb,
 		ieee80211_bss_info_change_notify(sdata,
 						 BSS_CHANGED_ARP_FILTER);
 
-	sdata_unlock(sdata);
+	mutex_unlock(&ifmgd->mtx);
 
 	return NOTIFY_DONE;
 }
@@ -683,7 +692,8 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 		return -EINVAL;
 
 #ifdef CONFIG_PM
-	if (hw->wiphy->wowlan && (!local->ops->suspend || !local->ops->resume))
+	if ((hw->wiphy->wowlan.flags || hw->wiphy->wowlan.n_patterns) &&
+	    (!local->ops->suspend || !local->ops->resume))
 		return -EINVAL;
 #endif
 
@@ -898,6 +908,9 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	if (!local->ops->remain_on_channel)
 		local->hw.wiphy->max_remain_on_channel_duration = 5000;
 
+	if (local->ops->sched_scan_start)
+		local->hw.wiphy->flags |= WIPHY_FLAG_SUPPORTS_SCHED_SCAN;
+
 	/* mac80211 based drivers don't support internal TDLS setup */
 	if (local->hw.wiphy->flags & WIPHY_FLAG_SUPPORTS_TDLS)
 		local->hw.wiphy->flags |= WIPHY_FLAG_TDLS_EXTERNAL_SETUP;
@@ -914,7 +927,7 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 		hw->queues = IEEE80211_MAX_QUEUES;
 
 	local->workqueue =
-		alloc_ordered_workqueue("%s", 0, wiphy_name(local->hw.wiphy));
+		alloc_ordered_workqueue(wiphy_name(local->hw.wiphy), 0);
 	if (!local->workqueue) {
 		result = -ENOMEM;
 		goto fail_workqueue;
@@ -1053,7 +1066,6 @@ void ieee80211_unregister_hw(struct ieee80211_hw *hw)
 
 	cancel_work_sync(&local->restart_work);
 	cancel_work_sync(&local->reconfig_filter);
-	flush_work(&local->sched_scan_stopped_work);
 
 	ieee80211_clear_tx_pending(local);
 	rate_control_deinitialize(local);

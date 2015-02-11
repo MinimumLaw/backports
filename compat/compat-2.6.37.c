@@ -5,7 +5,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  *
- * Backport functionality introduced in Linux 2.6.37.
+ * Compatibility file for Linux wireless for kernels 2.6.37.
  */
 
 #include <linux/compat.h>
@@ -259,9 +259,11 @@ void led_blink_set(struct led_classdev *led_cdev,
 	struct led_timer *led;
 	int current_brightness;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,25))
 	if (led_cdev->blink_set &&
 	    !led_cdev->blink_set(led_cdev, delay_on, delay_off))
 		return;
+#endif
 
 	led = led_get_timer(led_cdev);
 	if (!led) {
@@ -355,30 +357,3 @@ void *vzalloc(unsigned long size)
 	return buf;
 }
 EXPORT_SYMBOL_GPL(vzalloc);
-
-#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6,4))
-#ifdef CONFIG_RPS
-/**
- *	netif_set_real_num_rx_queues - set actual number of RX queues used
- *	@dev: Network device
- *	@rxq: Actual number of RX queues
- *
- *	This must be called either with the rtnl_lock held or before
- *	registration of the net device.  Returns 0 on success, or a
- *	negative error code.  If called before registration, it always
- *	succeeds.
- */
-int netif_set_real_num_rx_queues(struct net_device *dev, unsigned int rxq)
-{
-	if (rxq < 1 || rxq > dev->num_rx_queues)
-		return -EINVAL;
-
-	/* we can't update the sysfs object for older kernels */
-	if (dev->reg_state == NETREG_REGISTERED)
-		return -EINVAL;
-	dev->num_rx_queues = rxq;
-	return 0;
-}
-EXPORT_SYMBOL_GPL(netif_set_real_num_rx_queues);
-#endif
-#endif

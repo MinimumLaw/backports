@@ -73,6 +73,7 @@ config USB_PEGASUS
 	depends on n
 	tristate "USB Pegasus/Pegasus-II based ethernet device support"
 	depends on m
+	select NET_CORE
 	select BACKPORT_MII
 	---help---
 	  Say Y here if you know you have Pegasus or Pegasus-II based adapter.
@@ -90,6 +91,7 @@ config USB_RTL8150
 	depends on n
 	tristate "USB RTL8150 based ethernet device support"
 	depends on m
+	select NET_CORE
 	select BACKPORT_MII
 	help
 	  Say Y here if you have RTL8150 based usb-ethernet adapter.
@@ -103,6 +105,7 @@ config USB_RTL8152
 	depends on n
 	tristate "Realtek RTL8152 Based USB 2.0 Ethernet Adapters"
 	depends on m
+	select NET_CORE
 	select BACKPORT_MII
 	help
 	  This option adds support for Realtek RTL8152 based USB 2.0
@@ -114,6 +117,7 @@ config USB_RTL8152
 config USB_USBNET
 	tristate "Multi-purpose USB Networking Framework"
 	depends on m
+	select NET_CORE
 	select BACKPORT_MII
 	---help---
 	  This driver supports several kinds of network links over USB,
@@ -197,7 +201,6 @@ config USB_NET_AX88179_178A
 	  what other networking devices you have in use.
 
 config USB_NET_CDCETHER
-	depends on n
 	tristate "CDC Ethernet support (smart devices such as cable modems)"
 	depends on m
 	depends on USB_USBNET
@@ -243,6 +246,7 @@ config USB_NET_CDC_EEM
 	  name is used instead.
 
 config USB_NET_CDC_NCM
+	depends on n
 	tristate "CDC NCM support"
 	depends on m
 	depends on USB_USBNET
@@ -263,10 +267,11 @@ config USB_NET_CDC_NCM
 	    * Ericsson F5521gw Mobile Broadband Module
 
 config USB_NET_CDC_MBIM
+	depends on n
 	tristate "CDC MBIM support"
 	depends on m
 	depends on USB_USBNET
-	select USB_WDM
+	depends on USB_WDM
 	select USB_NET_CDC_NCM
 	help
 	  This driver provides support for CDC MBIM (Mobile Broadband
@@ -289,16 +294,6 @@ config USB_NET_DM9601
 	depends on CRC32
 	help
 	  This option adds support for Davicom DM9601 based USB 1.1
-	  10/100 Ethernet adapters.
-
-config USB_NET_SR9700
-	depends on n
-	tristate "CoreChip-sz SR9700 based USB 1.1 10/100 ethernet devices"
-	depends on m
-	depends on USB_USBNET
-	depends on CRC32
-	help
-	  This option adds support for CoreChip-sz SR9700 based USB 1.1
 	  10/100 Ethernet adapters.
 
 config USB_NET_SMSC75XX
@@ -499,10 +494,11 @@ config USB_NET_KALMIA
 	  module will be called kalmia.
 
 config USB_NET_QMI_WWAN
+	depends on n
 	tristate "QMI WWAN driver for Qualcomm MSM based 3G and LTE modems"
 	depends on m
 	depends on USB_USBNET
-	select USB_WDM
+	depends on USB_WDM
 	help
 	  Support WWAN LTE/3G devices based on Qualcomm Mobile Data Modem
 	  (MDM) chipsets.  Examples of such devices are
@@ -569,6 +565,7 @@ config USB_IPHETH
 	  For more information: http://giagio.com/wiki/moin.cgi/iPhoneEthernetDriver
 
 config USB_SIERRA_NET
+	depends on n
 	tristate "USB-to-WWAN Driver for Sierra Wireless modems"
 	depends on m
 	depends on USB_USBNET
@@ -583,7 +580,7 @@ config USB_VL600
 	tristate "LG VL600 modem dongle"
 	depends on m
 	depends on USB_NET_CDCETHER && TTY
-	select USB_ACM
+	depends on USB_ACM
 	help
 	  Select this if you want to use an LG Electronics 4G/LTE usb modem
 	  called VL600.  This driver only handles the ethernet

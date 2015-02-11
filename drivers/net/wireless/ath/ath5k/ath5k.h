@@ -29,7 +29,6 @@
 #include <linux/average.h>
 #include <linux/leds.h>
 #include <net/mac80211.h>
-#include <net/cfg80211.h>
 
 /* RX/TX descriptor hw structs
  * TODO: Driver part should only see sw structs */

@@ -46,8 +46,6 @@ obj-$(CPTCFG_VIDEO_SH_VOU)		+= sh_vou.o
 
 obj-$(CPTCFG_SOC_CAMERA)		+= soc_camera/
 
-obj-$(CPTCFG_VIDEO_RENESAS_VSP1)	+= vsp1/
-
 obj-y	+= davinci/
 
 obj-$(CONFIG_ARCH_OMAP)	+= omap/

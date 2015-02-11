@@ -33,7 +33,7 @@
 #include <linux/usb.h>
 #include <linux/workqueue.h>
 #include <media/v4l2-device.h>
-#include <media/tea575x.h>
+#include <sound/tea575x-tuner.h>
 
 #if defined(CONFIG_LEDS_CLASS) || \
     (defined(CONFIG_LEDS_CLASS_MODULE) && defined(CPTCFG_RADIO_SHARK_MODULE))

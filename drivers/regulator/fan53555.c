@@ -219,7 +219,7 @@ static int fan53555_regulator_register(struct fan53555_device_info *di,
 	rdesc->owner = THIS_MODULE;
 
 	di->rdev = regulator_register(&di->desc, config);
-	return PTR_ERR_OR_ZERO(di->rdev);
+	return PTR_RET(di->rdev);
 
 }
 
@@ -237,7 +237,7 @@ static int fan53555_regulator_probe(struct i2c_client *client,
 	unsigned int val;
 	int ret;
 
-	pdata = dev_get_platdata(&client->dev);
+	pdata = client->dev.platform_data;
 	if (!pdata || !pdata->regulator) {
 		dev_err(&client->dev, "Platform data not found!\n");
 		return -ENODEV;

@@ -35,13 +35,6 @@
 #include "efuse.h"
 #include <linux/export.h>
 #include <linux/kmemleak.h>
-#include <linux/module.h>
-
-MODULE_AUTHOR("lizhaoming	<chaoming_li@realsil.com.cn>");
-MODULE_AUTHOR("Realtek WlanFAE	<wlanfae@realtek.com>");
-MODULE_AUTHOR("Larry Finger	<Larry.FInger@lwfinger.net>");
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("PCI basic driver for rtlwifi");
 
 static const u16 pcibridge_vendors[PCI_BRIDGE_VENDOR_MAX] = {
 	PCI_VENDOR_ID_INTEL,
@@ -741,8 +734,6 @@ static void _rtl_pci_rx_interrupt(struct ieee80211_hw *hw)
 	};
 	int index = rtlpci->rx_ring[rx_queue_idx].idx;
 
-	if (rtlpci->driver_is_goingto_unload)
-		return;
 	/*RX NORMAL PKT */
 	while (count--) {
 		/*rx descriptor */
@@ -1639,7 +1630,6 @@ static void rtl_pci_stop(struct ieee80211_hw *hw)
 	 */
 	set_hal_stop(rtlhal);
 
-	rtlpci->driver_is_goingto_unload = true;
 	rtlpriv->cfg->ops->disable_interrupt(hw);
 	cancel_work_sync(&rtlpriv->works.lps_change_work);
 
@@ -1657,6 +1647,7 @@ static void rtl_pci_stop(struct ieee80211_hw *hw)
 	ppsc->rfchange_inprogress = true;
 	spin_unlock_irqrestore(&rtlpriv->locks.rf_ps_lock, flags);
 
+	rtlpci->driver_is_goingto_unload = true;
 	rtlpriv->cfg->ops->hw_disable(hw);
 	/* some things are not needed if firmware not available */
 	if (!rtlpriv->max_fw_size)
@@ -1895,7 +1886,7 @@ int rtl_pci_probe(struct pci_dev *pdev,
 	rtlpriv->rtlhal.interface = INTF_PCI;
 	rtlpriv->cfg = (struct rtl_hal_cfg *)(id->driver_data);
 	rtlpriv->intf_ops = &rtl_pci_ops;
-	rtlpriv->glb_var = &rtl_global_var;
+	rtlpriv->glb_var = &global_var;
 
 	/*
 	 *init dbgp flags before all

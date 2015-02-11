@@ -454,18 +454,6 @@ static void hci_setup_event_mask(struct hci_request *req)
 		events[4] |= 0x04; /* Read Remote Extended Features Complete */
 		events[5] |= 0x08; /* Synchronous Connection Complete */
 		events[5] |= 0x10; /* Synchronous Connection Changed */
-	} else {
-		/* Use a different default for LE-only devices */
-		memset(events, 0, sizeof(events));
-		events[0] |= 0x10; /* Disconnection Complete */
-		events[0] |= 0x80; /* Encryption Change */
-		events[1] |= 0x08; /* Read Remote Version Information Complete */
-		events[1] |= 0x20; /* Command Complete */
-		events[1] |= 0x40; /* Command Status */
-		events[1] |= 0x80; /* Hardware Error */
-		events[2] |= 0x04; /* Number of Completed Packets */
-		events[3] |= 0x02; /* Data Buffer Overflow */
-		events[5] |= 0x80; /* Encryption Key Refresh Complete */
 	}
 
 	if (lmp_inq_rssi_capable(hdev))
@@ -525,10 +513,7 @@ static void hci_init2_req(struct hci_request *req, unsigned long opt)
 
 	hci_setup_event_mask(req);
 
-	/* AVM Berlin (31), aka "BlueFRITZ!", doesn't support the read
-	 * local supported commands HCI command.
-	 */
-	if (hdev->manufacturer != 31 && hdev->hci_ver > BLUETOOTH_VER_1_1)
+	if (hdev->hci_ver > BLUETOOTH_VER_1_1)
 		hci_req_add(req, HCI_OP_READ_LOCAL_COMMANDS, 0, NULL);
 
 	if (lmp_ssp_capable(hdev)) {
@@ -612,15 +597,7 @@ static void hci_init3_req(struct hci_request *req, unsigned long opt)
 	struct hci_dev *hdev = req->hdev;
 	u8 p;
 
-	/* Some Broadcom based Bluetooth controllers do not support the
-	 * Delete Stored Link Key command. They are clearly indicating its
-	 * absence in the bit mask of supported commands.
-	 *
-	 * Check the supported commands and only if the the command is marked
-	 * as supported send it. If not supported assume that the controller
-	 * does not have actual support for stored link keys which makes this
-	 * command redundant anyway.
-	 */
+	/* Only send HCI_Delete_Stored_Link_Key if it is supported */
 	if (hdev->commands[6] & 0x80) {
 		struct hci_cp_delete_stored_link_key cp;
 
@@ -774,7 +751,7 @@ void hci_discovery_set_state(struct hci_dev *hdev, int state)
 	hdev->discovery.state = state;
 }
 
-void hci_inquiry_cache_flush(struct hci_dev *hdev)
+static void inquiry_cache_flush(struct hci_dev *hdev)
 {
 	struct discovery_state *cache = &hdev->discovery;
 	struct inquiry_entry *p, *n;
@@ -987,7 +964,7 @@ int hci_inquiry(void __user *arg)
 	hci_dev_lock(hdev);
 	if (inquiry_cache_age(hdev) > INQUIRY_CACHE_AGE_MAX ||
 	    inquiry_cache_empty(hdev) || ir.flags & IREQ_CACHE_FLUSH) {
-		hci_inquiry_cache_flush(hdev);
+		inquiry_cache_flush(hdev);
 		do_inquiry = 1;
 	}
 	hci_dev_unlock(hdev);
@@ -1228,6 +1205,8 @@ static int hci_dev_do_close(struct hci_dev *hdev)
 {
 	BT_DBG("%s %p", hdev->name, hdev);
 
+	cancel_work_sync(&hdev->le_scan);
+
 	cancel_delayed_work(&hdev->power_off);
 
 	hci_req_cancel(hdev, ENODEV);
@@ -1255,7 +1234,7 @@ static int hci_dev_do_close(struct hci_dev *hdev)
 	cancel_delayed_work_sync(&hdev->le_scan_disable);
 
 	hci_dev_lock(hdev);
-	hci_inquiry_cache_flush(hdev);
+	inquiry_cache_flush(hdev);
 	hci_conn_hash_flush(hdev);
 	hci_dev_unlock(hdev);
 
@@ -1356,7 +1335,7 @@ int hci_dev_reset(__u16 dev)
 	skb_queue_purge(&hdev->cmd_q);
 
 	hci_dev_lock(hdev);
-	hci_inquiry_cache_flush(hdev);
+	inquiry_cache_flush(hdev);
 	hci_conn_hash_flush(hdev);
 	hci_dev_unlock(hdev);
 
@@ -1576,7 +1555,7 @@ static int hci_rfkill_set_block(void *data, bool blocked)
 			hci_dev_do_close(hdev);
 	} else {
 		clear_bit(HCI_RFKILLED, &hdev->dev_flags);
-	}
+}
 
 	return 0;
 }
@@ -2023,59 +2002,80 @@ int hci_blacklist_del(struct hci_dev *hdev, bdaddr_t *bdaddr, u8 type)
 	return mgmt_device_unblocked(hdev, bdaddr, type);
 }
 
-static void inquiry_complete(struct hci_dev *hdev, u8 status)
+static void le_scan_param_req(struct hci_request *req, unsigned long opt)
 {
-	if (status) {
-		BT_ERR("Failed to start inquiry: status %d", status);
+	struct le_scan_params *param =  (struct le_scan_params *) opt;
+	struct hci_cp_le_set_scan_param cp;
 
-		hci_dev_lock(hdev);
-		hci_discovery_set_state(hdev, DISCOVERY_STOPPED);
-		hci_dev_unlock(hdev);
-		return;
-	}
+	memset(&cp, 0, sizeof(cp));
+	cp.type = param->type;
+	cp.interval = cpu_to_le16(param->interval);
+	cp.window = cpu_to_le16(param->window);
+
+	hci_req_add(req, HCI_OP_LE_SET_SCAN_PARAM, sizeof(cp), &cp);
 }
 
-static void le_scan_disable_work_complete(struct hci_dev *hdev, u8 status)
+static void le_scan_enable_req(struct hci_request *req, unsigned long opt)
 {
-	/* General inquiry access code (GIAC) */
-	u8 lap[3] = { 0x33, 0x8b, 0x9e };
-	struct hci_request req;
-	struct hci_cp_inquiry cp;
+	struct hci_cp_le_set_scan_enable cp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.enable = LE_SCAN_ENABLE;
+	cp.filter_dup = LE_SCAN_FILTER_DUP_ENABLE;
+
+	hci_req_add(req, HCI_OP_LE_SET_SCAN_ENABLE, sizeof(cp), &cp);
+}
+
+static int hci_do_le_scan(struct hci_dev *hdev, u8 type, u16 interval,
+			  u16 window, int timeout)
+{
+	long timeo = msecs_to_jiffies(3000);
+	struct le_scan_params param;
 	int err;
 
-	if (status) {
-		BT_ERR("Failed to disable LE scanning: status %d", status);
-		return;
-	}
+	BT_DBG("%s", hdev->name);
 
-	switch (hdev->discovery.type) {
-	case DISCOV_TYPE_LE:
-		hci_dev_lock(hdev);
-		hci_discovery_set_state(hdev, DISCOVERY_STOPPED);
-		hci_dev_unlock(hdev);
-		break;
+	if (test_bit(HCI_LE_SCAN, &hdev->dev_flags))
+		return -EINPROGRESS;
 
-	case DISCOV_TYPE_INTERLEAVED:
-		hci_req_init(&req, hdev);
+	param.type = type;
+	param.interval = interval;
+	param.window = window;
 
+	hci_req_lock(hdev);
+
+	err = __hci_req_sync(hdev, le_scan_param_req, (unsigned long) &param,
+			     timeo);
+	if (!err)
+		err = __hci_req_sync(hdev, le_scan_enable_req, 0, timeo);
+
+	hci_req_unlock(hdev);
+
+	if (err < 0)
+		return err;
+
+	queue_delayed_work(hdev->workqueue, &hdev->le_scan_disable,
+			   timeout);
+
+	return 0;
+}
+
+int hci_cancel_le_scan(struct hci_dev *hdev)
+{
+	BT_DBG("%s", hdev->name);
+
+	if (!test_bit(HCI_LE_SCAN, &hdev->dev_flags))
+		return -EALREADY;
+
+	if (cancel_delayed_work(&hdev->le_scan_disable)) {
+		struct hci_cp_le_set_scan_enable cp;
+
+		/* Send HCI command to disable LE Scan */
 		memset(&cp, 0, sizeof(cp));
-		memcpy(&cp.lap, lap, sizeof(cp.lap));
-		cp.length = DISCOV_INTERLEAVED_INQUIRY_LEN;
-		hci_req_add(&req, HCI_OP_INQUIRY, sizeof(cp), &cp);
-
-		hci_dev_lock(hdev);
-
-		hci_inquiry_cache_flush(hdev);
-
-		err = hci_req_run(&req, inquiry_complete);
-		if (err) {
-			BT_ERR("Inquiry request failed: err %d", err);
-			hci_discovery_set_state(hdev, DISCOVERY_STOPPED);
-		}
-
-		hci_dev_unlock(hdev);
-		break;
+		hci_send_cmd(hdev, HCI_OP_LE_SET_SCAN_ENABLE, sizeof(cp), &cp);
 	}
+
+	return 0;
 }
 
 static void le_scan_disable_work(struct work_struct *work)
@@ -2083,20 +2083,46 @@ static void le_scan_disable_work(struct work_struct *work)
 	struct hci_dev *hdev = container_of(work, struct hci_dev,
 					    le_scan_disable.work);
 	struct hci_cp_le_set_scan_enable cp;
-	struct hci_request req;
-	int err;
 
 	BT_DBG("%s", hdev->name);
 
-	hci_req_init(&req, hdev);
-
 	memset(&cp, 0, sizeof(cp));
-	cp.enable = LE_SCAN_DISABLE;
-	hci_req_add(&req, HCI_OP_LE_SET_SCAN_ENABLE, sizeof(cp), &cp);
 
-	err = hci_req_run(&req, le_scan_disable_work_complete);
-	if (err)
-		BT_ERR("Disable LE scanning request failed: err %d", err);
+	hci_send_cmd(hdev, HCI_OP_LE_SET_SCAN_ENABLE, sizeof(cp), &cp);
+}
+
+static void le_scan_work(struct work_struct *work)
+{
+	struct hci_dev *hdev = container_of(work, struct hci_dev, le_scan);
+	struct le_scan_params *param = &hdev->le_scan_params;
+
+	BT_DBG("%s", hdev->name);
+
+	hci_do_le_scan(hdev, param->type, param->interval, param->window,
+		       param->timeout);
+}
+
+int hci_le_scan(struct hci_dev *hdev, u8 type, u16 interval, u16 window,
+		int timeout)
+{
+	struct le_scan_params *param = &hdev->le_scan_params;
+
+	BT_DBG("%s", hdev->name);
+
+	if (test_bit(HCI_LE_PERIPHERAL, &hdev->dev_flags))
+		return -ENOTSUPP;
+
+	if (work_busy(&hdev->le_scan))
+		return -EINPROGRESS;
+
+	param->type = type;
+	param->interval = interval;
+	param->window = window;
+	param->timeout = timeout;
+
+	queue_work(system_long_wq, &hdev->le_scan);
+
+	return 0;
 }
 
 /* Alloc HCI device */
@@ -2133,6 +2159,7 @@ struct hci_dev *hci_alloc_dev(void)
 	INIT_WORK(&hdev->cmd_work, hci_cmd_work);
 	INIT_WORK(&hdev->tx_work, hci_tx_work);
 	INIT_WORK(&hdev->power_on, hci_power_on);
+	INIT_WORK(&hdev->le_scan, le_scan_work);
 
 	INIT_DELAYED_WORK(&hdev->power_off, hci_power_off);
 	INIT_DELAYED_WORK(&hdev->discov_off, hci_discov_off);
@@ -2191,15 +2218,28 @@ int hci_register_dev(struct hci_dev *hdev)
 
 	BT_DBG("%p name %s bus %d", hdev, hdev->name, hdev->bus);
 
-	hdev->workqueue = alloc_workqueue("%s", WQ_HIGHPRI | WQ_UNBOUND |
-					  WQ_MEM_RECLAIM, 1, hdev->name);
+	write_lock(&hci_dev_list_lock);
+	list_add(&hdev->list, &hci_dev_list);
+	write_unlock(&hci_dev_list_lock);
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37))
+	hdev->workqueue = alloc_workqueue(hdev->name, WQ_HIGHPRI | WQ_UNBOUND |
+					  WQ_MEM_RECLAIM, 1);
+#else
+	hdev->workqueue = create_singlethread_workqueue(hdev->name);
+#endif
 	if (!hdev->workqueue) {
 		error = -ENOMEM;
 		goto err;
 	}
 
-	hdev->req_workqueue = alloc_workqueue("%s", WQ_HIGHPRI | WQ_UNBOUND |
-					      WQ_MEM_RECLAIM, 1, hdev->name);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37))
+	hdev->req_workqueue = alloc_workqueue(hdev->name,
+					      WQ_HIGHPRI | WQ_UNBOUND |
+					      WQ_MEM_RECLAIM, 1);
+#else
+	hdev->req_workqueue = create_singlethread_workqueue(hdev->name);
+#endif
 	if (!hdev->req_workqueue) {
 		destroy_workqueue(hdev->workqueue);
 		error = -ENOMEM;
@@ -2228,10 +2268,6 @@ int hci_register_dev(struct hci_dev *hdev)
 	if (hdev->dev_type != HCI_AMP)
 		set_bit(HCI_AUTO_OFF, &hdev->dev_flags);
 
-	write_lock(&hci_dev_list_lock);
-	list_add(&hdev->list, &hci_dev_list);
-	write_unlock(&hci_dev_list_lock);
-
 	hci_notify(hdev, HCI_DEV_REG);
 	hci_dev_hold(hdev);
 
@@ -2244,6 +2280,9 @@ err_wqueue:
 	destroy_workqueue(hdev->req_workqueue);
 err:
 	ida_simple_remove(&hci_index_ida, hdev->id);
+	write_lock(&hci_dev_list_lock);
+	list_del(&hdev->list);
+	write_unlock(&hci_dev_list_lock);
 
 	return error;
 }
@@ -3425,16 +3464,8 @@ void hci_req_cmd_complete(struct hci_dev *hdev, u16 opcode, u8 status)
 	 */
 	if (hdev->sent_cmd) {
 		req_complete = bt_cb(hdev->sent_cmd)->req.complete;
-
-		if (req_complete) {
-			/* We must set the complete callback to NULL to
-			 * avoid calling the callback more than once if
-			 * this function gets called again.
-			 */
-			bt_cb(hdev->sent_cmd)->req.complete = NULL;
-
+		if (req_complete)
 			goto call_complete;
-		}
 	}
 
 	/* Remove all pending commands belonging to this request */
@@ -3540,6 +3571,36 @@ static void hci_cmd_work(struct work_struct *work)
 			queue_work(hdev->workqueue, &hdev->cmd_work);
 		}
 	}
+}
+
+int hci_do_inquiry(struct hci_dev *hdev, u8 length)
+{
+	/* General inquiry access code (GIAC) */
+	u8 lap[3] = { 0x33, 0x8b, 0x9e };
+	struct hci_cp_inquiry cp;
+
+	BT_DBG("%s", hdev->name);
+
+	if (test_bit(HCI_INQUIRY, &hdev->flags))
+		return -EINPROGRESS;
+
+	inquiry_cache_flush(hdev);
+
+	memset(&cp, 0, sizeof(cp));
+	memcpy(&cp.lap, lap, sizeof(cp.lap));
+	cp.length  = length;
+
+	return hci_send_cmd(hdev, HCI_OP_INQUIRY, sizeof(cp), &cp);
+}
+
+int hci_cancel_inquiry(struct hci_dev *hdev)
+{
+	BT_DBG("%s", hdev->name);
+
+	if (!test_bit(HCI_INQUIRY, &hdev->flags))
+		return -EALREADY;
+
+	return hci_send_cmd(hdev, HCI_OP_INQUIRY_CANCEL, 0, NULL);
 }
 
 u8 bdaddr_to_le(u8 bdaddr_type)

@@ -5,7 +5,8 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  *
- * Backport functionality introduced in Linux user_namespace.c
+ * Compatibility file for Linux wireless for kernels backporting
+ * user_namespace.c
  */
 
 #include <linux/module.h>

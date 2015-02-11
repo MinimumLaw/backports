@@ -1196,12 +1196,6 @@ static int saa7164_initdev(struct pci_dev *pci_dev,
 	if (NULL == dev)
 		return -ENOMEM;
 
-	err = v4l2_device_register(&pci_dev->dev, &dev->v4l2_dev);
-	if (err < 0) {
-		dev_err(&pci_dev->dev, "v4l2_device_register failed\n");
-		goto fail_free;
-	}
-
 	/* pci init */
 	dev->pci = pci_dev;
 	if (pci_enable_device(pci_dev)) {
@@ -1354,11 +1348,9 @@ static int saa7164_initdev(struct pci_dev *pci_dev,
 		if (fw_debug) {
 			dev->kthread = kthread_run(saa7164_thread_function, dev,
 				"saa7164 debug");
-			if (IS_ERR(dev->kthread)) {
-				dev->kthread = NULL;
+			if (!dev->kthread)
 				printk(KERN_ERR "%s() Failed to create "
 					"debug kernel thread\n", __func__);
-			}
 		}
 
 	} /* != BOARD_UNKNOWN */
@@ -1375,7 +1367,6 @@ fail_fw:
 fail_irq:
 	saa7164_dev_unregister(dev);
 fail_free:
-	v4l2_device_unregister(&dev->v4l2_dev);
 	kfree(dev);
 	return err;
 }
@@ -1448,7 +1439,6 @@ static void saa7164_finidev(struct pci_dev *pci_dev)
 	mutex_unlock(&devlist);
 
 	saa7164_dev_unregister(dev);
-	v4l2_device_unregister(&dev->v4l2_dev);
 	kfree(dev);
 }
 

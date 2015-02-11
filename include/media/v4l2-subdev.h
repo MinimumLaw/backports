@@ -24,7 +24,6 @@
 #include <linux/types.h>
 #include <linux/v4l2-subdev.h>
 #include <media/media-entity.h>
-#include <media/v4l2-async.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-dev.h>
 #include <media/v4l2-fh.h>
@@ -89,6 +88,7 @@ struct v4l2_decode_vbi_line {
 
 /* Core ops: it is highly recommended to implement at least these ops:
 
+   g_chip_ident
    log_status
    g_register
    s_register
@@ -145,6 +145,7 @@ struct v4l2_subdev_io_pin_config {
 	performed later.  It must not sleep.  *Called from an IRQ context*.
  */
 struct v4l2_subdev_core_ops {
+	int (*g_chip_ident)(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip);
 	int (*log_status)(struct v4l2_subdev *sd);
 	int (*s_io_pin_config)(struct v4l2_subdev *sd, size_t n,
 				      struct v4l2_subdev_io_pin_config *pincfg);
@@ -584,14 +585,6 @@ struct v4l2_subdev {
 	void *host_priv;
 	/* subdev device node */
 	struct video_device *devnode;
-	/* pointer to the physical device, if any */
-	struct device *dev;
-	/* Links this subdev to a global subdev_list or @notifier->done list. */
-	struct list_head async_list;
-	/* Pointer to respective struct v4l2_async_subdev. */
-	struct v4l2_async_subdev *asd;
-	/* Pointer to the managing notifier. */
-	struct v4l2_async_notifier *notifier;
 };
 
 #define media_entity_to_v4l2_subdev(ent) \
@@ -667,7 +660,7 @@ void v4l2_subdev_init(struct v4l2_subdev *sd,
 /* Call an ops of a v4l2_subdev, doing the right checks against
    NULL pointers.
 
-   Example: err = v4l2_subdev_call(sd, core, s_std, norm);
+   Example: err = v4l2_subdev_call(sd, core, g_chip_ident, &chip);
  */
 #define v4l2_subdev_call(sd, o, f, args...)				\
 	(!(sd) ? -ENODEV : (((sd)->ops->o && (sd)->ops->o->f) ?	\
