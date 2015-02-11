@@ -23,6 +23,7 @@ config B44
 	depends on m
 	depends on SSB_POSSIBLE && HAS_DMA
 	select SSB
+	select NET_CORE
 	select BACKPORT_MII
 	---help---
 	  If you have a network (Ethernet) controller of this type, say Y
@@ -56,6 +57,7 @@ config BCM63XX_ENET
 	tristate "Broadcom 63xx internal mac support"
 	depends on m
 	depends on BCM63XX
+	select NET_CORE
 	select BACKPORT_MII
 	depends on PHYLIB
 	help
@@ -145,8 +147,7 @@ config BGMAC
 	depends on n
 	tristate "BCMA bus GBit core support"
 	depends on m
-	depends on BCMA_HOST_SOC && HAS_DMA && BCM47XX
-	depends on PHYLIB
+	depends on BCMA_HOST_SOC && HAS_DMA
 	---help---
 	  This driver supports GBit MAC and BCM4706 GBit MAC cores on BCMA bus.
 	  They can be found on BCM47xx SoCs and provide gigabit ethernet.

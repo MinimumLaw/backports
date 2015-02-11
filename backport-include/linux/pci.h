@@ -3,6 +3,15 @@
 #include_next <linux/pci.h>
 #include <linux/version.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+/* Backports b718989da7 */
+#define pci_enable_device_mem LINUX_BACKPORT(pci_enable_device_mem)
+int __must_check pci_enable_device_mem(struct pci_dev *dev);
+
+#define DEFINE_PCI_DEVICE_TABLE(_table) \
+	const struct pci_device_id _table[] __devinitdata
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29)
 #define compat_pci_suspend(fn)						\
 	int fn##_compat(struct pci_dev *pdev, pm_message_t state) 	\
@@ -70,7 +79,7 @@
 #define compat_pci_resume(fn)
 #endif
 
-#ifndef module_pci_driver
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,4,0)
 /**
  * module_pci_driver() - Helper macro for registering a PCI driver
  * @__pci_driver: pci_driver struct
@@ -125,6 +134,17 @@ static inline int pcie_capability_clear_dword(struct pci_dev *dev, int pos,
 }
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0)
+/*
+ * DRM requires this, but we can't really backport it well
+ */
+static inline void __iomem *pci_platform_rom(struct pci_dev *pdev, size_t *size)
+{
+	printk(KERN_WARNING "compat: not providing pci_platform_rom!\n");
+	return NULL;
+}
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 /* mask pci_pcie_cap as debian squeeze also backports this */
 #define pci_pcie_cap LINUX_BACKPORT(pci_pcie_cap)
@@ -157,21 +177,5 @@ int pci_wake_from_d3(struct pci_dev *dev, bool enable);
 #define pci_pme_capable LINUX_BACKPORT(pci_pme_capable)
 bool pci_pme_capable(struct pci_dev *dev, pci_power_t state);
 #endif
-
-#ifndef PCI_DEVICE_SUB
-/**
- * PCI_DEVICE_SUB - macro used to describe a specific pci device with subsystem
- * @vend: the 16 bit PCI Vendor ID
- * @dev: the 16 bit PCI Device ID
- * @subvend: the 16 bit PCI Subvendor ID
- * @subdev: the 16 bit PCI Subdevice ID
- *
- * This macro is used to create a struct pci_device_id that matches a
- * specific device with subsystem information.
- */
-#define PCI_DEVICE_SUB(vend, dev, subvend, subdev) \
-	.vendor = (vend), .device = (dev), \
-	.subvendor = (subvend), .subdevice = (subdev)
-#endif /* PCI_DEVICE_SUB */
 
 #endif /* _BACKPORT_LINUX_PCI_H */

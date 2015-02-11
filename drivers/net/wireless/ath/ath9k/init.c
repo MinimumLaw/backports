@@ -21,7 +21,6 @@
 #include <linux/ath9k_platform.h>
 #include <linux/module.h>
 #include <linux/relay.h>
-#include <net/ieee80211_radiotap.h>
 
 #include "ath9k.h"
 
@@ -53,9 +52,9 @@ static int ath9k_btcoex_enable;
 module_param_named(btcoex_enable, ath9k_btcoex_enable, int, 0444);
 MODULE_PARM_DESC(btcoex_enable, "Enable wifi-BT coexistence");
 
-static int ath9k_bt_ant_diversity;
-module_param_named(bt_ant_diversity, ath9k_bt_ant_diversity, int, 0444);
-MODULE_PARM_DESC(bt_ant_diversity, "Enable WLAN/BT RX antenna diversity");
+static int ath9k_enable_diversity;
+module_param_named(enable_diversity, ath9k_enable_diversity, int, 0444);
+MODULE_PARM_DESC(enable_diversity, "Enable Antenna diversity for AR9565");
 
 bool is_ath9k_unloaded;
 /* We use the hw_value as an index into our private channel structure */
@@ -146,22 +145,14 @@ static struct ieee80211_rate ath9k_legacy_rates[] = {
 	RATE(20, 0x1a, IEEE80211_RATE_SHORT_PREAMBLE),
 	RATE(55, 0x19, IEEE80211_RATE_SHORT_PREAMBLE),
 	RATE(110, 0x18, IEEE80211_RATE_SHORT_PREAMBLE),
-	RATE(60, 0x0b, (IEEE80211_RATE_SUPPORTS_5MHZ |
-			IEEE80211_RATE_SUPPORTS_10MHZ)),
-	RATE(90, 0x0f, (IEEE80211_RATE_SUPPORTS_5MHZ |
-			IEEE80211_RATE_SUPPORTS_10MHZ)),
-	RATE(120, 0x0a, (IEEE80211_RATE_SUPPORTS_5MHZ |
-			 IEEE80211_RATE_SUPPORTS_10MHZ)),
-	RATE(180, 0x0e, (IEEE80211_RATE_SUPPORTS_5MHZ |
-			 IEEE80211_RATE_SUPPORTS_10MHZ)),
-	RATE(240, 0x09, (IEEE80211_RATE_SUPPORTS_5MHZ |
-			 IEEE80211_RATE_SUPPORTS_10MHZ)),
-	RATE(360, 0x0d, (IEEE80211_RATE_SUPPORTS_5MHZ |
-			 IEEE80211_RATE_SUPPORTS_10MHZ)),
-	RATE(480, 0x08, (IEEE80211_RATE_SUPPORTS_5MHZ |
-			 IEEE80211_RATE_SUPPORTS_10MHZ)),
-	RATE(540, 0x0c, (IEEE80211_RATE_SUPPORTS_5MHZ |
-			 IEEE80211_RATE_SUPPORTS_10MHZ)),
+	RATE(60, 0x0b, 0),
+	RATE(90, 0x0f, 0),
+	RATE(120, 0x0a, 0),
+	RATE(180, 0x0e, 0),
+	RATE(240, 0x09, 0),
+	RATE(360, 0x0d, 0),
+	RATE(480, 0x08, 0),
+	RATE(540, 0x0c, 0),
 };
 
 #ifdef CPTCFG_MAC80211_LEDS
@@ -440,8 +431,6 @@ static int ath9k_init_queues(struct ath_softc *sc)
 	sc->config.cabqReadytime = ATH_CABQ_READY_TIME;
 	ath_cabq_update(sc);
 
-	sc->tx.uapsdq = ath_txq_setup(sc, ATH9K_TX_QUEUE_UAPSD, 0);
-
 	for (i = 0; i < IEEE80211_NUM_ACS; i++) {
 		sc->tx.txq_map[i] = ath_txq_setup(sc, ATH9K_TX_QUEUE_DATA, i);
 		sc->tx.txq_map[i]->mac80211_qnum = i;
@@ -521,43 +510,6 @@ static void ath9k_init_misc(struct ath_softc *sc)
 	sc->spec_config.fft_period = 0xF;
 }
 
-static void ath9k_init_platform(struct ath_softc *sc)
-{
-	struct ath_hw *ah = sc->sc_ah;
-	struct ath9k_hw_capabilities *pCap = &ah->caps;
-	struct ath_common *common = ath9k_hw_common(ah);
-
-	if (common->bus_ops->ath_bus_type != ATH_PCI)
-		return;
-
-	if (sc->driver_data & (ATH9K_PCI_CUS198 |
-			       ATH9K_PCI_CUS230)) {
-		ah->config.xlna_gpio = 9;
-		ah->config.xatten_margin_cfg = true;
-		ah->config.alt_mingainidx = true;
-		ah->config.ant_ctrl_comm2g_switch_enable = 0x000BBB88;
-		sc->ant_comb.low_rssi_thresh = 20;
-		sc->ant_comb.fast_div_bias = 3;
-
-		ath_info(common, "Set parameters for %s\n",
-			 (sc->driver_data & ATH9K_PCI_CUS198) ?
-			 "CUS198" : "CUS230");
-	}
-
-	if (sc->driver_data & ATH9K_PCI_CUS217)
-		ath_info(common, "CUS217 card detected\n");
-
-	if (sc->driver_data & ATH9K_PCI_BT_ANT_DIV) {
-		pCap->hw_caps |= ATH9K_HW_CAP_BT_ANT_DIV;
-		ath_info(common, "Set BT/WLAN RX diversity capability\n");
-	}
-
-	if (sc->driver_data & ATH9K_PCI_D3_L1_WAR) {
-		ah->config.pcie_waen = 0x0040473b;
-		ath_info(common, "Enable WAR for ASPM D3/L1\n");
-	}
-}
-
 static void ath9k_eeprom_request_cb(const struct firmware *eeprom_blob,
 				    void *ctx)
 {
@@ -608,7 +560,6 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 {
 	struct ath9k_platform_data *pdata = sc->dev->platform_data;
 	struct ath_hw *ah = NULL;
-	struct ath9k_hw_capabilities *pCap;
 	struct ath_common *common;
 	int ret = 0, i;
 	int csz = 0;
@@ -625,7 +576,6 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	ah->reg_ops.rmw = ath9k_reg_rmw;
 	atomic_set(&ah->intr_ref_cnt, -1);
 	sc->sc_ah = ah;
-	pCap = &ah->caps;
 
 	sc->dfs_detector = dfs_pattern_detector_init(ah, NL80211_DFS_UNSET);
 
@@ -652,26 +602,20 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	common->disable_ani = false;
 
 	/*
-	 * Platform quirks.
+	 * Enable Antenna diversity only when BTCOEX is disabled
+	 * and the user manually requests the feature.
 	 */
-	ath9k_init_platform(sc);
-
-	/*
-	 * Enable WLAN/BT RX Antenna diversity only when:
-	 *
-	 * - BTCOEX is disabled.
-	 * - the user manually requests the feature.
-	 * - the HW cap is set using the platform data.
-	 */
-	if (!common->btcoex_enabled && ath9k_bt_ant_diversity &&
-	    (pCap->hw_caps & ATH9K_HW_CAP_BT_ANT_DIV))
-		common->bt_ant_diversity = 1;
+	if (!common->btcoex_enabled && ath9k_enable_diversity)
+		common->antenna_diversity = 1;
 
 	spin_lock_init(&common->cc_lock);
 
 	spin_lock_init(&sc->sc_serial_rw);
 	spin_lock_init(&sc->sc_pm_lock);
 	mutex_init(&sc->mutex);
+#ifdef CPTCFG_ATH9K_MAC_DEBUG
+	spin_lock_init(&sc->debug.samp_lock);
+#endif
 	tasklet_init(&sc->intr_tq, ath9k_tasklet, (unsigned long)sc);
 	tasklet_init(&sc->bcon_tasklet, ath9k_beacon_tasklet,
 		     (unsigned long)sc);
@@ -740,15 +684,13 @@ static void ath9k_init_band_txpower(struct ath_softc *sc, int band)
 	struct ieee80211_supported_band *sband;
 	struct ieee80211_channel *chan;
 	struct ath_hw *ah = sc->sc_ah;
-	struct cfg80211_chan_def chandef;
 	int i;
 
 	sband = &sc->sbands[band];
 	for (i = 0; i < sband->n_channels; i++) {
 		chan = &sband->channels[i];
 		ah->curchan = &ah->channels[chan->hw_value];
-		cfg80211_chandef_create(&chandef, chan, NL80211_CHAN_HT20);
-		ath9k_cmn_update_ichannel(ah->curchan, &chandef);
+		ath9k_cmn_update_ichannel(ah->curchan, chan, NL80211_CHAN_HT20);
 		ath9k_hw_set_txpowerlimit(ah, MAX_RATE_POWER, true);
 	}
 }
@@ -813,15 +755,6 @@ static const struct ieee80211_iface_combination if_comb[] = {
 	}
 };
 
-#ifdef CONFIG_PM
-static const struct wiphy_wowlan_support ath9k_wowlan_support = {
-	.flags = WIPHY_WOWLAN_MAGIC_PKT | WIPHY_WOWLAN_DISCONNECT,
-	.n_patterns = MAX_NUM_USER_PATTERN,
-	.pattern_min_len = 1,
-	.pattern_max_len = MAX_PATTERN_SIZE,
-};
-#endif
-
 void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 {
 	struct ath_hw *ah = sc->sc_ah;
@@ -837,18 +770,11 @@ void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 		IEEE80211_HW_SUPPORTS_RC_TABLE |
 		IEEE80211_HW_SUPPORTS_HT_CCK_RATES;
 
-	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_HT) {
-		hw->flags |= IEEE80211_HW_AMPDU_AGGREGATION;
-
-		if (AR_SREV_9280_20_OR_LATER(ah))
-			hw->radiotap_mcs_details |=
-				IEEE80211_RADIOTAP_MCS_HAVE_STBC;
-	}
+	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_HT)
+		 hw->flags |= IEEE80211_HW_AMPDU_AGGREGATION;
 
 	if (AR_SREV_9160_10_OR_LATER(sc->sc_ah) || ath9k_modparam_nohwcrypt)
 		hw->flags |= IEEE80211_HW_MFP_CAPABLE;
-
-	hw->wiphy->features |= NL80211_FEATURE_ACTIVE_MONITOR;
 
 	hw->wiphy->interface_modes =
 		BIT(NL80211_IFTYPE_P2P_GO) |
@@ -867,17 +793,23 @@ void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 	hw->wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
 	hw->wiphy->flags |= WIPHY_FLAG_SUPPORTS_TDLS;
 	hw->wiphy->flags |= WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL;
-	hw->wiphy->flags |= WIPHY_FLAG_SUPPORTS_5_10_MHZ;
-	hw->wiphy->flags |= WIPHY_FLAG_HAS_CHANNEL_SWITCH;
 
 #ifdef CONFIG_PM_SLEEP
+
 	if ((ah->caps.hw_caps & ATH9K_HW_WOW_DEVICE_CAPABLE) &&
-	    (sc->driver_data & ATH9K_PCI_WOW) &&
-	    device_can_wakeup(sc->dev))
-		hw->wiphy->wowlan = &ath9k_wowlan_support;
+	    device_can_wakeup(sc->dev)) {
+
+		hw->wiphy->wowlan.flags = WIPHY_WOWLAN_MAGIC_PKT |
+					  WIPHY_WOWLAN_DISCONNECT;
+		hw->wiphy->wowlan.n_patterns = MAX_NUM_USER_PATTERN;
+		hw->wiphy->wowlan.pattern_min_len = 1;
+		hw->wiphy->wowlan.pattern_max_len = MAX_PATTERN_SIZE;
+
+	}
 
 	atomic_set(&sc->wow_sleep_proc_intr, -1);
 	atomic_set(&sc->wow_got_bmiss_intr, -1);
+
 #endif
 
 	hw->queues = 4;

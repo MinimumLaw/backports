@@ -76,19 +76,25 @@ static void hidp_copy_session(struct hidp_session *session, struct hidp_conninfo
 	ci->flags = session->flags;
 	ci->state = BT_CONNECTED;
 
+	ci->vendor  = 0x0000;
+	ci->product = 0x0000;
+	ci->version = 0x0000;
+
 	if (session->input) {
 		ci->vendor  = session->input->id.vendor;
 		ci->product = session->input->id.product;
 		ci->version = session->input->id.version;
 		if (session->input->name)
-			strlcpy(ci->name, session->input->name, 128);
+			strncpy(ci->name, session->input->name, 128);
 		else
-			strlcpy(ci->name, "HID Boot Device", 128);
-	} else if (session->hid) {
+			strncpy(ci->name, "HID Boot Device", 128);
+	}
+
+	if (session->hid) {
 		ci->vendor  = session->hid->vendor;
 		ci->product = session->hid->product;
 		ci->version = session->hid->version;
-		strlcpy(ci->name, session->hid->name, 128);
+		strncpy(ci->name, session->hid->name, 128);
 	}
 }
 
@@ -241,31 +247,6 @@ static int hidp_send_report(struct hidp_session *session, struct hid_report *rep
 
 	kfree(buf);
 	return ret;
-}
-
-static int hidp_hidinput_event(struct input_dev *dev, unsigned int type,
-			       unsigned int code, int value)
-{
-	struct hid_device *hid = input_get_drvdata(dev);
-	struct hidp_session *session = hid->driver_data;
-	struct hid_field *field;
-	int offset;
-
-	BT_DBG("session %p type %d code %d value %d",
-	       session, type, code, value);
-
-	if (type != EV_LED)
-		return -1;
-
-	offset = hidinput_find_field(hid, type, code, &field);
-	if (offset == -1) {
-		hid_warn(dev, "event field not found\n");
-		return -1;
-	}
-
-	hid_set_field(field, offset, value);
-
-	return hidp_send_report(session, field->report);
 }
 
 static int hidp_get_raw_report(struct hid_device *hid,
@@ -800,6 +781,20 @@ static int hidp_parse(struct hid_device *hid)
 
 static int hidp_start(struct hid_device *hid)
 {
+	struct hidp_session *session = hid->driver_data;
+	struct hid_report *report;
+
+	if (hid->quirks & HID_QUIRK_NO_INIT_REPORTS)
+		return 0;
+
+	list_for_each_entry(report, &hid->report_enum[HID_INPUT_REPORT].
+			report_list, list)
+		hidp_send_report(session, report);
+
+	list_for_each_entry(report, &hid->report_enum[HID_FEATURE_REPORT].
+			report_list, list)
+		hidp_send_report(session, report);
+
 	return 0;
 }
 
@@ -819,7 +814,6 @@ static struct hid_ll_driver hidp_hid_driver = {
 	.stop = hidp_stop,
 	.open  = hidp_open,
 	.close = hidp_close,
-	.hidinput_input_event = hidp_hidinput_event,
 };
 
 /* This function sets up the hid device. It does not add it
@@ -964,29 +958,6 @@ static void hidp_session_dev_del(struct hidp_session *session)
 }
 
 /*
- * Asynchronous device registration
- * HID device drivers might want to perform I/O during initialization to
- * detect device types. Therefore, call device registration in a separate
- * worker so the HIDP thread can schedule I/O operations.
- * Note that this must be called after the worker thread was initialized
- * successfully. This will then add the devices and increase session state
- * on success, otherwise it will terminate the session thread.
- */
-static void hidp_session_dev_work(struct work_struct *work)
-{
-	struct hidp_session *session = container_of(work,
-						    struct hidp_session,
-						    dev_init);
-	int ret;
-
-	ret = hidp_session_dev_add(session);
-	if (!ret)
-		atomic_inc(&session->state);
-	else
-		hidp_session_terminate(session);
-}
-
-/*
  * Create new session object
  * Allocate session object, initialize static fields, copy input data into the
  * object and take a reference to all sub-objects.
@@ -1033,7 +1004,6 @@ static int hidp_session_new(struct hidp_session **out, const bdaddr_t *bdaddr,
 	session->idle_to = req->idle_to;
 
 	/* device management */
-	INIT_WORK(&session->dev_init, hidp_session_dev_work);
 	setup_timer(&session->timer, hidp_idle_timeout,
 		    (unsigned long)session);
 
@@ -1172,8 +1142,8 @@ static void hidp_session_terminate(struct hidp_session *session)
  * Probe HIDP session
  * This is called from the l2cap_conn core when our l2cap_user object is bound
  * to the hci-connection. We get the session via the \user object and can now
- * start the session thread, link it into the global session list and
- * schedule HID/input device registration.
+ * start the session thread, register the HID/input devices and link it into
+ * the global session list.
  * The global session-list owns its own reference to the session object so you
  * can drop your own reference after registering the l2cap_user object.
  */
@@ -1195,30 +1165,21 @@ static int hidp_session_probe(struct l2cap_conn *conn,
 		goto out_unlock;
 	}
 
-	if (session->input) {
-		ret = hidp_session_dev_add(session);
-		if (ret)
-			goto out_unlock;
-	}
-
 	ret = hidp_session_start_sync(session);
 	if (ret)
-		goto out_del;
+		goto out_unlock;
 
-	/* HID device registration is async to allow I/O during probe */
-	if (session->input)
-		atomic_inc(&session->state);
-	else
-		schedule_work(&session->dev_init);
+	ret = hidp_session_dev_add(session);
+	if (ret)
+		goto out_stop;
 
 	hidp_session_get(session);
 	list_add(&session->list, &hidp_session_list);
 	ret = 0;
 	goto out_unlock;
 
-out_del:
-	if (session->input)
-		hidp_session_dev_del(session);
+out_stop:
+	hidp_session_terminate(session);
 out_unlock:
 	up_write(&hidp_session_sem);
 	return ret;
@@ -1248,12 +1209,7 @@ static void hidp_session_remove(struct l2cap_conn *conn,
 	down_write(&hidp_session_sem);
 
 	hidp_session_terminate(session);
-
-	cancel_work_sync(&session->dev_init);
-	if (session->input ||
-	    atomic_read(&session->state) > HIDP_SESSION_PREPARING)
-		hidp_session_dev_del(session);
-
+	hidp_session_dev_del(session);
 	list_del(&session->list);
 
 	up_write(&hidp_session_sem);

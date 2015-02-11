@@ -12,7 +12,6 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/log2.h>
@@ -136,8 +135,6 @@ struct mt9v032 {
 	struct mutex power_lock;
 	int power_count;
 
-	struct clk *clk;
-
 	struct mt9v032_platform_data *pdata;
 
 	u32 sysclk;
@@ -222,9 +219,10 @@ static int mt9v032_power_on(struct mt9v032 *mt9v032)
 	struct i2c_client *client = v4l2_get_subdevdata(&mt9v032->subdev);
 	int ret;
 
-	clk_set_rate(mt9v032->clk, mt9v032->sysclk);
-	clk_prepare_enable(mt9v032->clk);
-	udelay(1);
+	if (mt9v032->pdata->set_clock) {
+		mt9v032->pdata->set_clock(&mt9v032->subdev, mt9v032->sysclk);
+		udelay(1);
+	}
 
 	/* Reset the chip and stop data read out */
 	ret = mt9v032_write(client, MT9V032_RESET, 1);
@@ -240,7 +238,8 @@ static int mt9v032_power_on(struct mt9v032 *mt9v032)
 
 static void mt9v032_power_off(struct mt9v032 *mt9v032)
 {
-	clk_disable_unprepare(mt9v032->clk);
+	if (mt9v032->pdata->set_clock)
+		mt9v032->pdata->set_clock(&mt9v032->subdev, 0);
 }
 
 static int __mt9v032_set_power(struct mt9v032 *mt9v032, bool on)
@@ -745,13 +744,9 @@ static int mt9v032_probe(struct i2c_client *client,
 		return -EIO;
 	}
 
-	mt9v032 = devm_kzalloc(&client->dev, sizeof(*mt9v032), GFP_KERNEL);
+	mt9v032 = kzalloc(sizeof(*mt9v032), GFP_KERNEL);
 	if (!mt9v032)
 		return -ENOMEM;
-
-	mt9v032->clk = devm_clk_get(&client->dev, NULL);
-	if (IS_ERR(mt9v032->clk))
-		return PTR_ERR(mt9v032->clk);
 
 	mutex_init(&mt9v032->power_lock);
 	mt9v032->pdata = pdata;
@@ -835,9 +830,8 @@ static int mt9v032_probe(struct i2c_client *client,
 
 	mt9v032->pad.flags = MEDIA_PAD_FL_SOURCE;
 	ret = media_entity_init(&mt9v032->subdev.entity, 1, &mt9v032->pad, 0);
-
 	if (ret < 0)
-		v4l2_ctrl_handler_free(&mt9v032->ctrls);
+		kfree(mt9v032);
 
 	return ret;
 }
@@ -847,10 +841,9 @@ static int mt9v032_remove(struct i2c_client *client)
 	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct mt9v032 *mt9v032 = to_mt9v032(subdev);
 
-	v4l2_ctrl_handler_free(&mt9v032->ctrls);
 	v4l2_device_unregister_subdev(subdev);
 	media_entity_cleanup(&subdev->entity);
-
+	kfree(mt9v032);
 	return 0;
 }
 

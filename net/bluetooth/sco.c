@@ -176,13 +176,8 @@ static int sco_connect(struct sock *sk)
 	else
 		type = SCO_LINK;
 
-	if (sco_pi(sk)->setting == BT_VOICE_TRANSPARENT &&
-	    (!lmp_transp_capable(hdev) || !lmp_esco_capable(hdev))) {
-		err = -EOPNOTSUPP;
-		goto done;
-	}
-
-	hcon = hci_connect_sco(hdev, type, dst, sco_pi(sk)->setting);
+	hcon = hci_connect(hdev, type, dst, BDADDR_BREDR, BT_SECURITY_LOW,
+			   HCI_AT_NO_BONDING);
 	if (IS_ERR(hcon)) {
 		err = PTR_ERR(hcon);
 		goto done;
@@ -421,8 +416,6 @@ static struct sock *sco_sock_alloc(struct net *net, struct socket *sock, int pro
 
 	sk->sk_protocol = proto;
 	sk->sk_state    = BT_OPEN;
-
-	sco_pi(sk)->setting = BT_VOICE_CVSD_16BIT;
 
 	setup_timer(&sk->sk_timer, sco_sock_timeout, (unsigned long)sk);
 
@@ -663,7 +656,7 @@ static int sco_sock_sendmsg(struct kiocb *iocb, struct socket *sock,
 	return err;
 }
 
-static void sco_conn_defer_accept(struct hci_conn *conn, u16 setting)
+static void sco_conn_defer_accept(struct hci_conn *conn, int mask)
 {
 	struct hci_dev *hdev = conn->hdev;
 
@@ -675,7 +668,11 @@ static void sco_conn_defer_accept(struct hci_conn *conn, u16 setting)
 		struct hci_cp_accept_conn_req cp;
 
 		bacpy(&cp.bdaddr, &conn->dst);
-		cp.role = 0x00; /* Ignored */
+
+		if (lmp_rswitch_capable(hdev) && (mask & HCI_LM_MASTER))
+			cp.role = 0x00; /* Become master */
+		else
+			cp.role = 0x01; /* Remain slave */
 
 		hci_send_cmd(hdev, HCI_OP_ACCEPT_CONN_REQ, sizeof(cp), &cp);
 	} else {
@@ -686,21 +683,9 @@ static void sco_conn_defer_accept(struct hci_conn *conn, u16 setting)
 
 		cp.tx_bandwidth   = __constant_cpu_to_le32(0x00001f40);
 		cp.rx_bandwidth   = __constant_cpu_to_le32(0x00001f40);
-		cp.content_format = cpu_to_le16(setting);
-
-		switch (setting & SCO_AIRMODE_MASK) {
-		case SCO_AIRMODE_TRANSP:
-			if (conn->pkt_type & ESCO_2EV3)
-				cp.max_latency = __constant_cpu_to_le16(0x0008);
-			else
-				cp.max_latency = __constant_cpu_to_le16(0x000D);
-			cp.retrans_effort = 0x02;
-			break;
-		case SCO_AIRMODE_CVSD:
-			cp.max_latency = __constant_cpu_to_le16(0xffff);
-			cp.retrans_effort = 0xff;
-			break;
-		}
+		cp.max_latency    = __constant_cpu_to_le16(0xffff);
+		cp.content_format = cpu_to_le16(hdev->voice_setting);
+		cp.retrans_effort = 0xff;
 
 		hci_send_cmd(hdev, HCI_OP_ACCEPT_SYNC_CONN_REQ,
 			     sizeof(cp), &cp);
@@ -717,8 +702,9 @@ static int sco_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 
 	if (sk->sk_state == BT_CONNECT2 &&
 	    test_bit(BT_SK_DEFER_SETUP, &bt_sk(sk)->flags)) {
-		sco_conn_defer_accept(pi->conn->hcon, pi->setting);
+		sco_conn_defer_accept(pi->conn->hcon, 0);
 		sk->sk_state = BT_CONFIG;
+		msg->msg_namelen = 0;
 
 		release_sock(sk);
 		return 0;
@@ -736,8 +722,7 @@ static int sco_sock_setsockopt(struct socket *sock, int level, int optname, char
 #endif
 {
 	struct sock *sk = sock->sk;
-	int len, err = 0;
-	struct bt_voice voice;
+	int err = 0;
 	u32 opt;
 
 	BT_DBG("sk %p", sk);
@@ -761,31 +746,6 @@ static int sco_sock_setsockopt(struct socket *sock, int level, int optname, char
 			set_bit(BT_SK_DEFER_SETUP, &bt_sk(sk)->flags);
 		else
 			clear_bit(BT_SK_DEFER_SETUP, &bt_sk(sk)->flags);
-		break;
-
-	case BT_VOICE:
-		if (sk->sk_state != BT_OPEN && sk->sk_state != BT_BOUND &&
-		    sk->sk_state != BT_CONNECT2) {
-			err = -EINVAL;
-			break;
-		}
-
-		voice.setting = sco_pi(sk)->setting;
-
-		len = min_t(unsigned int, sizeof(voice), optlen);
-		if (copy_from_user((char *) &voice, optval, len)) {
-			err = -EFAULT;
-			break;
-		}
-
-		/* Explicitly check for these values */
-		if (voice.setting != BT_VOICE_TRANSPARENT &&
-		    voice.setting != BT_VOICE_CVSD_16BIT) {
-			err = -EINVAL;
-			break;
-		}
-
-		sco_pi(sk)->setting = voice.setting;
 		break;
 
 	default:
@@ -813,9 +773,7 @@ static int sco_sock_getsockopt_old(struct socket *sock, int optname, char __user
 
 	switch (optname) {
 	case SCO_OPTIONS:
-		if (sk->sk_state != BT_CONNECTED &&
-		    !(sk->sk_state == BT_CONNECT2 &&
-		      test_bit(BT_SK_DEFER_SETUP, &bt_sk(sk)->flags))) {
+		if (sk->sk_state != BT_CONNECTED) {
 			err = -ENOTCONN;
 			break;
 		}
@@ -831,9 +789,7 @@ static int sco_sock_getsockopt_old(struct socket *sock, int optname, char __user
 		break;
 
 	case SCO_CONNINFO:
-		if (sk->sk_state != BT_CONNECTED &&
-		    !(sk->sk_state == BT_CONNECT2 &&
-		      test_bit(BT_SK_DEFER_SETUP, &bt_sk(sk)->flags))) {
+		if (sk->sk_state != BT_CONNECTED) {
 			err = -ENOTCONN;
 			break;
 		}
@@ -861,7 +817,6 @@ static int sco_sock_getsockopt(struct socket *sock, int level, int optname, char
 {
 	struct sock *sk = sock->sk;
 	int len, err = 0;
-	struct bt_voice voice;
 
 	BT_DBG("sk %p", sk);
 
@@ -883,15 +838,6 @@ static int sco_sock_getsockopt(struct socket *sock, int level, int optname, char
 
 		if (put_user(test_bit(BT_SK_DEFER_SETUP, &bt_sk(sk)->flags),
 			     (u32 __user *) optval))
-			err = -EFAULT;
-
-		break;
-
-	case BT_VOICE:
-		voice.setting = sco_pi(sk)->setting;
-
-		len = min_t(unsigned int, len, sizeof(voice));
-		if (copy_to_user(optval, (char *)&voice, len))
 			err = -EFAULT;
 
 		break;

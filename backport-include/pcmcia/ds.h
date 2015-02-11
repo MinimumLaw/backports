@@ -27,13 +27,10 @@
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
-#ifndef pcmcia_enable_device
-#define pcmcia_enable_device(link)	pcmcia_request_configuration(link, &(link)->conf)
-#endif
+#define pcmcia_enable_device(link)	pcmcia_request_configuration(link, &link->conf)
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
-#define pcmcia_read_config_byte LINUX_BACKPORT(pcmcia_read_config_byte)
 static inline int pcmcia_read_config_byte(struct pcmcia_device *p_dev, off_t where, u8 *val)
 {
         int ret;
@@ -43,7 +40,6 @@ static inline int pcmcia_read_config_byte(struct pcmcia_device *p_dev, off_t whe
         return ret;
 }
 
-#define pcmcia_write_config_byte LINUX_BACKPORT(pcmcia_write_config_byte)
 static inline int pcmcia_write_config_byte(struct pcmcia_device *p_dev, off_t where, u8 val)
 {
 	conf_reg_t reg = { 0, CS_WRITE, where, val };

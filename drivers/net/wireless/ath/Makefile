@@ -4,7 +4,6 @@ obj-$(CPTCFG_CARL9170)		+= carl9170/
 obj-$(CPTCFG_ATH6KL)		+= ath6kl/
 obj-$(CPTCFG_AR5523)		+= ar5523/
 obj-$(CPTCFG_WIL6210)		+= wil6210/
-obj-$(CPTCFG_ATH10K)		+= ath10k/
 
 obj-$(CPTCFG_ATH_COMMON)	+= ath.o
 

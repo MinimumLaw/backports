@@ -145,7 +145,11 @@ void hci_conn_del_sysfs(struct hci_conn *conn)
 		dev = device_find_child(&conn->dev, NULL, __match_tty);
 		if (!dev)
 			break;
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,29))
 		device_move(dev, NULL, DPM_ORDER_DEV_LAST);
+#else
+		device_move(dev, NULL);
+#endif
 		put_device(dev);
 	}
 
@@ -598,7 +602,7 @@ int __init bt_sysfs_init(void)
 
 	bt_class = class_create(THIS_MODULE, "bluetooth");
 
-	return PTR_ERR_OR_ZERO(bt_class);
+	return PTR_RET(bt_class);
 }
 
 void bt_sysfs_cleanup(void)

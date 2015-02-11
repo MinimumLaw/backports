@@ -4,7 +4,7 @@
 #include_next <linux/usb.h>
 #include <linux/version.h>
 
-#ifndef module_usb_driver
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0)
 /**
  * module_usb_driver() - Helper macro for registering a USB driver
  * @__usb_driver: usb_driver struct
@@ -18,7 +18,7 @@
 		       usb_deregister)
 #endif
 
-#ifndef USB_VENDOR_AND_INTERFACE_INFO
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,6,0)
 /**
  * Backports
  *
@@ -28,6 +28,7 @@
  *
  * 	USB: add USB_VENDOR_AND_INTERFACE_INFO() macro
  */
+#include <linux/usb.h>
 #define USB_VENDOR_AND_INTERFACE_INFO(vend, cl, sc, pr) \
        .match_flags = USB_DEVICE_ID_MATCH_INT_INFO \
                | USB_DEVICE_ID_MATCH_VENDOR, \
@@ -35,7 +36,7 @@
        .bInterfaceClass = (cl), \
        .bInterfaceSubClass = (sc), \
        .bInterfaceProtocol = (pr)
-#endif /* USB_VENDOR_AND_INTERFACE_INFO */
+#endif
 
 #ifndef USB_DEVICE_INTERFACE_NUMBER
 /**
@@ -144,20 +145,5 @@ extern void usb_unpoison_urb(struct urb *urb);
 #define usb_anchor_empty LINUX_BACKPORT(usb_anchor_empty)
 extern int usb_anchor_empty(struct usb_anchor *anchor);
 #endif /* 2.6.23-2.6.27 */
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,2,0)
-static inline int usb_translate_errors(int error_code)
-{
-	switch (error_code) {
-	case 0:
-	case -ENOMEM:
-	case -ENODEV:
-	case -EOPNOTSUPP:
-		return error_code;
-	default:
-		return -EIO;
-	}
-}
-#endif /* < 2.6.39 */
 
 #endif /* __BACKPORT_USB_H */

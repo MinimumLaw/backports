@@ -76,7 +76,7 @@ static bool mwifiex_pcie_ok_to_access_hw(struct mwifiex_adapter *adapter)
 	return false;
 }
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 /*
  * Kernel needs to suspend all functions separately. Therefore all
  * registered functions must have drivers with suspend and resume
@@ -85,12 +85,11 @@ static bool mwifiex_pcie_ok_to_access_hw(struct mwifiex_adapter *adapter)
  * If already not suspended, this function allocates and sends a host
  * sleep activate request to the firmware and turns off the traffic.
  */
-static int mwifiex_pcie_suspend(struct device *dev)
+static int mwifiex_pcie_suspend(struct pci_dev *pdev, pm_message_t state)
 {
 	struct mwifiex_adapter *adapter;
 	struct pcie_service_card *card;
 	int hs_actived;
-	struct pci_dev *pdev = to_pci_dev(dev);
 
 	if (pdev) {
 		card = (struct pcie_service_card *) pci_get_drvdata(pdev);
@@ -121,11 +120,10 @@ static int mwifiex_pcie_suspend(struct device *dev)
  * If already not resumed, this function turns on the traffic and
  * sends a host sleep cancel request to the firmware.
  */
-static int mwifiex_pcie_resume(struct device *dev)
+static int mwifiex_pcie_resume(struct pci_dev *pdev)
 {
 	struct mwifiex_adapter *adapter;
 	struct pcie_service_card *card;
-	struct pci_dev *pdev = to_pci_dev(dev);
 
 	if (pdev) {
 		card = (struct pcie_service_card *) pci_get_drvdata(pdev);
@@ -213,9 +211,9 @@ static void mwifiex_pcie_remove(struct pci_dev *pdev)
 	wait_for_completion(&adapter->fw_load);
 
 	if (user_rmmod) {
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 		if (adapter->is_suspended)
-			mwifiex_pcie_resume(&pdev->dev);
+			mwifiex_pcie_resume(pdev);
 #endif
 
 		for (i = 0; i < adapter->priv_num; i++)
@@ -235,14 +233,6 @@ static void mwifiex_pcie_remove(struct pci_dev *pdev)
 	kfree(card);
 }
 
-static void mwifiex_pcie_shutdown(struct pci_dev *pdev)
-{
-	user_rmmod = 1;
-	mwifiex_pcie_remove(pdev);
-
-	return;
-}
-
 static DEFINE_PCI_DEVICE_TABLE(mwifiex_ids) = {
 	{
 		PCIE_VENDOR_ID_MARVELL, PCIE_DEVICE_ID_MARVELL_88W8766P,
@@ -259,32 +249,17 @@ static DEFINE_PCI_DEVICE_TABLE(mwifiex_ids) = {
 
 MODULE_DEVICE_TABLE(pci, mwifiex_ids);
 
-#ifdef CONFIG_PM_SLEEP
-compat_pci_suspend(mwifiex_pcie_suspend);
-compat_pci_resume(mwifiex_pcie_resume);
-
-/* Power Management Hooks */
-static SIMPLE_DEV_PM_OPS(mwifiex_pcie_pm_ops, mwifiex_pcie_suspend,
-				mwifiex_pcie_resume);
-#endif
-
 /* PCI Device Driver */
 static struct pci_driver __refdata mwifiex_pcie = {
 	.name     = "mwifiex_pcie",
 	.id_table = mwifiex_ids,
 	.probe    = mwifiex_pcie_probe,
 	.remove   = mwifiex_pcie_remove,
-#ifdef CONFIG_PM_SLEEP
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29))
-	.driver   = {
-		.pm = &mwifiex_pcie_pm_ops,
-	},
-#else
-	.suspend    = mwifiex_pcie_suspend_compat,
-	.resume     = mwifiex_pcie_resume_compat,
+#ifdef CONFIG_PM
+	/* Power Management Hooks */
+	.suspend  = mwifiex_pcie_suspend,
+	.resume   = mwifiex_pcie_resume,
 #endif
-#endif
-	.shutdown = mwifiex_pcie_shutdown,
 };
 
 /*
@@ -1950,7 +1925,7 @@ mwifiex_check_fw_status(struct mwifiex_adapter *adapter, u32 poll_num)
 			ret = 0;
 			break;
 		} else {
-			msleep(100);
+			mdelay(100);
 			ret = -1;
 		}
 	}
@@ -1962,10 +1937,12 @@ mwifiex_check_fw_status(struct mwifiex_adapter *adapter, u32 poll_num)
 		else if (!winner_status) {
 			dev_err(adapter->dev, "PCI-E is the winner\n");
 			adapter->winner = 1;
+			ret = -1;
 		} else {
 			dev_err(adapter->dev,
 				"PCI-E is not the winner <%#x,%d>, exit dnld\n",
 				ret, adapter->winner);
+			ret = 0;
 		}
 	}
 

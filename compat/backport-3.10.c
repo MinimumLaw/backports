@@ -12,8 +12,7 @@
 #include <linux/module.h>
 #include <linux/err.h>
 #include <linux/proc_fs.h>
-#include <linux/random.h>
-#include <linux/tty.h>
+#include <linux/hid.h>
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0))
 #include <linux/init.h>
@@ -80,48 +79,18 @@ void proc_set_user(struct proc_dir_entry *de, kuid_t uid, kgid_t gid)
 }
 EXPORT_SYMBOL_GPL(proc_set_user);
 
-/* get_random_int() was not exported for module use until 3.10-rc.
-   Implement it here in terms of the more expensive get_random_bytes()
+/*
+ * Allocator for buffer that is going to be passed to hid_output_report()
  */
-unsigned int get_random_int(void)
+u8 *hid_alloc_report_buf(struct hid_report *report, gfp_t flags)
 {
-	unsigned int r;
-	get_random_bytes(&r, sizeof(r));
+	/*
+	 * 7 extra bytes are necessary to achieve proper functionality
+	 * of implement() working on 8 byte chunks
+	 */
 
-	return r;
+	int len = ((report->size - 1) >> 3) + 1 + (report->id > 0) + 7;
+
+	return kmalloc(len, flags);
 }
-EXPORT_SYMBOL_GPL(get_random_int);
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,28))
-/**
- * tty_port_tty_wakeup - helper to wake up a tty
- *
- * @port: tty port
- */
-void tty_port_tty_wakeup(struct tty_port *port)
-{
-	struct tty_struct *tty = tty_port_tty_get(port);
-
-	if (tty) {
-		tty_wakeup(tty);
-		tty_kref_put(tty);
-	}
-}
-EXPORT_SYMBOL_GPL(tty_port_tty_wakeup);
-
-/**
- * tty_port_tty_hangup - helper to hang up a tty
- *
- * @port: tty port
- * @check_clocal: hang only ttys with CLOCAL unset?
- */
-void tty_port_tty_hangup(struct tty_port *port, bool check_clocal)
-{
-	struct tty_struct *tty = tty_port_tty_get(port);
-
-	if (tty && (!check_clocal || !C_CLOCAL(tty)))
-		tty_hangup(tty);
-	tty_kref_put(tty);
-}
-EXPORT_SYMBOL_GPL(tty_port_tty_hangup);
-#endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,28)) */
+EXPORT_SYMBOL_GPL(hid_alloc_report_buf);
