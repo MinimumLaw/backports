@@ -1,8 +1,8 @@
 #!/usr/bin/sudo /bin/sh
 
 export ARCH=arm
-export CROSS_COMPILE=arm-fsl-linux-gnueabi-
-export KLIB_BUILD=/cimc/build/ravion-kernel
+export CROSS_COMPILE=arm-linux-gnueabi-
+export KLIB_BUILD=/home/rpo/ravion-kernel
 export KLIB=./../imx51kernel.output
 
 if [ -z "$*" ]; then
